@@ -7,6 +7,7 @@ import com.google.gson.Gson;
 import com.stardust.autojs.yolo.YoloPredictor;
 import com.stardust.autojs.yolo.onnx.domain.DetectResult;
 import com.stardust.autojs.yolo.onnx.domain.Detection;
+import com.stardust.autojs.yolo.onnx.domain.ClassificationResult;
 import com.stardust.autojs.yolo.onnx.util.Letterbox;
 
 import org.opencv.core.CvType;
@@ -26,12 +27,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import java.util.stream.Collectors;
 
 import ai.onnxruntime.OnnxTensor;
 import ai.onnxruntime.OrtEnvironment;
 import ai.onnxruntime.OrtException;
 import ai.onnxruntime.OrtSession;
+import ai.onnxruntime.OrtSession.Result;
 import ai.onnxruntime.providers.NNAPIFlags;
 import androidx.annotation.RequiresApi;
 
@@ -66,7 +67,6 @@ public class OnnxYoloV8Predictor extends YoloPredictor {
         init = true;
     }
 
-
     public void setShapeSize(double width, double height) {
         this.shapeSize = new Size(width, height);
     }
@@ -93,14 +93,14 @@ public class OnnxYoloV8Predictor extends YoloPredictor {
 
         session = environment.createSession(modelPath, sessionOptions);
         // 输出基本信息
-        session.getInputInfo().keySet().forEach(x -> {
+        for (String inputName : session.getInputInfo().keySet()) {
             try {
-                System.out.println("input name = " + x);
-                System.out.println(session.getInputInfo().get(x).getInfo().toString());
+                System.out.println("input name = " + inputName);
+                System.out.println(session.getInputInfo().get(inputName).getInfo().toString());
             } catch (OrtException e) {
                 throw new RuntimeException(e);
             }
-        });
+        }
         // 如果入参labels无效或未定义，使用模型内置labels
         if (labels == null || labels.size() == 0) {
             labels = initLabels(session);
@@ -109,44 +109,39 @@ public class OnnxYoloV8Predictor extends YoloPredictor {
     }
 
     private List<String> initLabels(OrtSession session) throws OrtException {
-        String meteStr = session.getMetadata().getCustomMetadata().get("names");
-        if (meteStr == null) {
+        String metaStr = session.getMetadata().getCustomMetadata().get("names");
+        if (metaStr == null) {
             Log.d(TAG, "initLabels: 读取names失败 无法自动修正labels");
             return Collections.emptyList();
         }
-        String[] labels = new String[meteStr.split(",").length];
-
-        Matcher matcher = LABEL_PATTERN.matcher(meteStr);
-
-        int h = 0;
+        List<String> labelList = new ArrayList<>();
+        
+        Matcher matcher = LABEL_PATTERN.matcher(metaStr);
         while (matcher.find()) {
-            labels[h] = matcher.group(1);
-            h++;
+            labelList.add(matcher.group(1));
         }
-        return Arrays.asList(labels);
+        
+        return labelList;
     }
 
     private void initShapeSize(OrtSession session) throws OrtException {
-        String meteStr = session.getMetadata().getCustomMetadata().get("imgsz");
-        Log.d(TAG, "initShapeSize: " + meteStr);
-        if (meteStr == null) {
+        String metaStr = session.getMetadata().getCustomMetadata().get("imgsz");
+        Log.d(TAG, "initShapeSize: " + metaStr);
+        if (metaStr == null) {
             Log.d(TAG, "initShapeSize: 读取imgsz失败 无法自动修正输入大小");
             return;
         }
-        Matcher matcher = IMG_SIZE_PATTERN.matcher(meteStr);
+        Matcher matcher = IMG_SIZE_PATTERN.matcher(metaStr);
         if (matcher.find()) {
-            String shapeSize = matcher.group(1);
-            if (shapeSize == null) {
-                Log.d(TAG, "initShapeSize: 读取imgsz格式异常 无法自动修正输入大小");
-                return;
+            String shapeSizeStr = matcher.group(1);
+            if (shapeSizeStr != null) {
+                this.shapeSize = new Size(Double.parseDouble(shapeSizeStr), Double.parseDouble(shapeSizeStr));
+                Log.d(TAG, "set shape size: " + shapeSizeStr);
             }
-            this.shapeSize = new Size(Double.parseDouble(shapeSize), Double.parseDouble(shapeSize));
-            Log.d(TAG, "set shape size: " + shapeSize);
         } else {
             Log.d(TAG, "initShapeSize: 读取imgsz格式异常 无法自动修正输入大小");
         }
     }
-
 
     private void addNNApiProvider(OrtSession.SessionOptions sessionOptions) {
         if (!tryNpu) {
@@ -175,15 +170,12 @@ public class OnnxYoloV8Predictor extends YoloPredictor {
     }
 
     private HashMap<String, OnnxTensor> preprocessImage(Mat img) throws OrtException {
-
-        // 读取 image
         Mat image = img.clone();
-        // 将四通道转换为三通道
         if (image.channels() == 4) {
             Imgproc.cvtColor(image, image, Imgproc.COLOR_RGBA2RGB);
         }
         Log.d(TAG, "preprocessImage: image's channels: " + image.channels());
-        // 更改 image 尺寸
+        
         letterbox = new Letterbox();
         letterbox.setNewShape(this.shapeSize);
         image = letterbox.letterbox(image);
@@ -191,53 +183,54 @@ public class OnnxYoloV8Predictor extends YoloPredictor {
         int rows = letterbox.getHeight();
         int cols = letterbox.getWidth();
         int channels = image.channels();
-        // 转换Mat对象的数据类型为CV_64F，即64位浮点型
+        
         Mat convertedImage = new Mat();
-        image.convertTo(convertedImage, CvType.CV_64F);
+        image.convertTo(convertedImage, CvType.CV_32FC3, 1.0 / 255.0);
 
-        // 获取整个像素数据
-        double[] pixelData = new double[rows * cols * channels];
+        float[] pixelData = new float[rows * cols * channels];
         convertedImage.get(0, 0, pixelData);
 
         float[] pixels = new float[channels * rows * cols];
-        for (int i = 0; i < rows; i++) {
-            for (int j = 0; j < cols; j++) {
-                for (int k = 0; k < channels; k++) {
-                    // 这样设置相当于同时做了image.transpose((2, 0, 1))操作
-                    // 重新组织内存访问模式，提高缓存效率
-                    pixels[k * rows * cols + i * cols + j] = (float) (pixelData[(i * cols + j) * channels + k] / 255.0);
+        for (int c = 0; c < channels; c++) {
+            for (int h = 0; h < rows; h++) {
+                for (int w = 0; w < cols; w++) {
+                    int index = c * rows * cols + h * cols + w;
+                    int srcIndex = (h * cols + w) * channels + c;
+                    pixels[index] = pixelData[srcIndex];
                 }
             }
         }
+        
         image.release();
         convertedImage.release();
-        // 创建OnnxTensor对象
+        
         long[] shape = {1L, (long) channels, (long) rows, (long) cols};
         OnnxTensor tensor = OnnxTensor.createTensor(environment, FloatBuffer.wrap(pixels), shape);
-        HashMap<String, OnnxTensor> stringOnnxTensorHashMap = new HashMap<>();
-        stringOnnxTensorHashMap.put(session.getInputInfo().keySet().iterator().next(), tensor);
-        return stringOnnxTensorHashMap;
+        
+        HashMap<String, OnnxTensor> inputMap = new HashMap<>();
+        String inputName = session.getInputInfo().keySet().iterator().next();
+        inputMap.put(inputName, tensor);
+        
+        return inputMap;
     }
 
-    private List<Detection> postProcessOutput(OrtSession.Result output) throws OrtException {
-        float[][] outputData = ((float[][][]) output.get(0).getValue())[0];
+    private List<Detection> postProcessOutput(Result output) throws OrtException {
+        float[][][] outputArray = (float[][][]) output.get(0).getValue();
+        float[][] outputData = outputArray[0];
 
         outputData = transposeMatrix(outputData);
         Map<Integer, List<float[]>> class2Bbox = new HashMap<>();
 
         for (float[] bbox : outputData) {
-            int label = argmax(bbox, 4); // 直接在原数组上进行操作
+            int label = argmax(bbox, 4);
             float conf = bbox[label + 4];
             if (conf < confThreshold) {
                 continue;
             }
 
             bbox[4] = conf;
-
-            // xywh to (x1, y1, x2, y2)
             xywh2xyxy(bbox);
 
-            // skip invalid predictions
             if (bbox[0] >= bbox[2] || bbox[1] >= bbox[3]) {
                 continue;
             }
@@ -251,13 +244,8 @@ public class OnnxYoloV8Predictor extends YoloPredictor {
             List<float[]> bboxes = entry.getValue();
             bboxes = nonMaxSuppression(bboxes, nmsThreshold);
             for (float[] bbox : bboxes) {
-                String labelString = "";
-                if (labels.size() - 1 < label) {
-                    labelString = String.valueOf(label);
-                } else {
-                    labelString = labels.get(label);
-                }
-                detections.add(new Detection(labelString, entry.getKey(), Arrays.copyOfRange(bbox, 0, 4), bbox[4]));
+                String labelString = (labels != null && labels.size() > label) ? labels.get(label) : String.valueOf(label);
+                detections.add(new Detection(labelString, label, Arrays.copyOfRange(bbox, 0, 4), bbox[4]));
             }
         }
         return detections;
@@ -271,16 +259,19 @@ public class OnnxYoloV8Predictor extends YoloPredictor {
         prepareSession();
         long start_time = System.currentTimeMillis();
         Map<String, OnnxTensor> inputMap = preprocessImage(image);
-        // 运行推理
-        try (OrtSession.Result output = session.run(inputMap)) {
+        try (Result output = session.run(inputMap)) {
             Log.d(TAG, "predictYolo: onnx run cost " + (System.currentTimeMillis() - start_time) + "ms");
             List<Detection> detections = postProcessOutput(output);
-            Log.d("YoloV8Predictor", String.format("onnx predict cost: %d ms", (System.currentTimeMillis() - start_time)));
-            return detections.stream().map(detection -> new DetectResult(detection, letterbox))
-                    .collect(Collectors.toList());
+            Log.d(TAG, String.format("onnx predict cost: %d ms", (System.currentTimeMillis() - start_time)));
+            List<DetectResult> results = new ArrayList<>();
+            for (Detection detection : detections) {
+                results.add(new DetectResult(detection, letterbox));
+            }
+            return results;
         } finally {
-            // 释放资源
-            inputMap.values().forEach(OnnxTensor::close);
+            for (OnnxTensor tensor : inputMap.values()) {
+                tensor.close();
+            }
         }
     }
 
@@ -322,7 +313,6 @@ public class OnnxYoloV8Predictor extends YoloPredictor {
     }
 
     public static float computeIOU(float[] box1, float[] box2) {
-
         float area1 = (box1[2] - box1[0]) * (box1[3] - box1[1]);
         float area2 = (box2[2] - box2[0]) * (box2[3] - box2[1]);
 
@@ -331,31 +321,143 @@ public class OnnxYoloV8Predictor extends YoloPredictor {
         float right = Math.min(box1[2], box2[2]);
         float bottom = Math.min(box1[3], box2[3]);
 
-        // 计算交集区域的宽度和高度
         float width = Math.max(right - left, 0);
         float height = Math.max(bottom - top, 0);
 
-        // 计算交集面积和并集面积
         float interArea = width * height;
         float unionArea = area1 + area2 - interArea;
 
-        // 计算交并比
         return Math.max(interArea / unionArea, 1e-8f);
     }
 
-
-    //返回最大值的索引
-    // 优化后的 argmax 函数
     public static int argmax(float[] a, int start) {
-        float re = -Float.MAX_VALUE;
+        float max = -Float.MAX_VALUE;
         int arg = -1;
         for (int i = start; i < a.length; i++) {
-            if (a[i] >= re) {
-                re = a[i];
+            if (a[i] > max) {
+                max = a[i];
                 arg = i - start;
             }
         }
         return arg;
+    }
+
+    // ------------------ 分类相关 ------------------
+    @Override
+    public List<ClassificationResult> predictClassification(Mat image) throws OrtException {
+        prepareSession();
+        Map<String, OnnxTensor> inputMap = preprocessForClassification(image);
+        try (Result output = session.run(inputMap)) {
+            return postProcessClassificationOutput(output);
+        } finally {
+            for (OnnxTensor tensor : inputMap.values()) {
+                tensor.close();
+            }
+        }
+    }
+
+    private List<ClassificationResult> postProcessClassificationOutput(Result output) throws OrtException {
+    List<ClassificationResult> results = new ArrayList<>();
+    try {
+        Object raw = output.get(0).getValue();
+
+        float[] probabilities;
+        if (raw instanceof float[][]) {
+            probabilities = ((float[][]) raw)[0];
+        } else if (raw instanceof float[][][]) {
+            probabilities = ((float[][][]) raw)[0][0];
+        } else {
+            Log.e(TAG, "Unsupported output type: " + raw.getClass());
+            return Collections.emptyList();
+        }
+
+        // 判断是否已经是概率
+        float sum = 0f;
+        for (float v : probabilities) sum += v;
+        if (Math.abs(sum - 1.0f) > 1e-3) {
+            // 不是概率，做 softmax
+            probabilities = softmax(probabilities);
+        } else {
+            Log.d(TAG, "Output already normalized, skip softmax");
+        }
+
+        for (int i = 0; i < probabilities.length; i++) {
+            if (probabilities[i] >= classificationThreshold) {
+                String labelName = (labels != null && labels.size() > i) ? labels.get(i) : "Class_" + i;
+                results.add(new ClassificationResult(labelName, i, probabilities[i]));
+            }
+        }
+
+        results.sort((a, b) -> Float.compare(b.getConfidence(), a.getConfidence()));
+        return results;
+
+    } catch (Exception e) {
+        Log.e(TAG, "Error processing classification output", e);
+        return Collections.emptyList();
+    }
+}
+
+
+
+    private float[] softmax(float[] logits) {
+        float maxLogit = logits[0];
+        for (float value : logits) {
+            if (value > maxLogit) maxLogit = value;
+        }
+
+        float sum = 0.0f;
+        float[] exps = new float[logits.length];
+        for (int i = 0; i < logits.length; i++) {
+            exps[i] = (float) Math.exp(logits[i] - maxLogit);
+            sum += exps[i];
+        }
+
+        for (int i = 0; i < exps.length; i++) {
+            exps[i] /= sum;
+        }
+        return exps;
+    }
+
+    private Map<String, OnnxTensor> preprocessForClassification(Mat img) throws OrtException {
+        Mat image = img.clone();
+        if (image.channels() == 4) {
+            Imgproc.cvtColor(image, image, Imgproc.COLOR_RGBA2RGB);
+        }
+
+        // 使用模型指定的输入尺寸
+        Imgproc.resize(image, image, new Size(shapeSize.width, shapeSize.height));
+        Mat convertedImage = new Mat();
+        image.convertTo(convertedImage, CvType.CV_32FC3, 1.0 / 255.0);
+
+        int rows = convertedImage.rows();
+        int cols = convertedImage.cols();
+        int channels = convertedImage.channels();
+
+        float[] pixelData = new float[rows * cols * channels];
+        convertedImage.get(0, 0, pixelData);
+
+        float[] pixels = new float[channels * rows * cols];
+        for (int c = 0; c < channels; c++) {
+            for (int h = 0; h < rows; h++) {
+                for (int w = 0; w < cols; w++) {
+                    int index = c * rows * cols + h * cols + w;
+                    int srcIndex = (h * cols + w) * channels + c;
+                    pixels[index] = pixelData[srcIndex];
+                }
+            }
+        }
+
+        long[] shape = {1L, (long) channels, (long) rows, (long) cols};
+        OnnxTensor tensor = OnnxTensor.createTensor(environment, FloatBuffer.wrap(pixels), shape);
+
+        Map<String, OnnxTensor> inputMap = new HashMap<>();
+        String inputName = session.getInputInfo().keySet().iterator().next();
+        inputMap.put(inputName, tensor);
+
+        image.release();
+        convertedImage.release();
+
+        return inputMap;
     }
 
     @Override
@@ -364,10 +466,12 @@ public class OnnxYoloV8Predictor extends YoloPredictor {
         if (session != null) {
             try {
                 session.close();
-                session = null;
             } catch (OrtException e) {
-                Log.e(TAG, "close session failed" + e);
+                Log.e(TAG, "close session failed", e);
             }
+            session = null;
+        }
+        if (environment != null) {
             environment.close();
             environment = null;
         }
