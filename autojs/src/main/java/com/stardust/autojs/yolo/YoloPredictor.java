@@ -1,18 +1,13 @@
 package com.stardust.autojs.yolo;
 
 import android.util.Log;
-
 import com.stardust.autojs.core.opencv.OpenCVHelper;
+import com.stardust.autojs.yolo.onnx.domain.ClassificationResult;
 import com.stardust.autojs.yolo.onnx.domain.DetectResult;
-
 import org.opencv.core.Mat;
-
+import java.util.Collections;
 import java.util.List;
 
-/**
- * @author TonyJiangWJ
- * @since 2024/6/1
- */
 public abstract class YoloPredictor {
 
     static {
@@ -21,13 +16,11 @@ public abstract class YoloPredictor {
         });
     }
 
-
     protected boolean init;
-
     protected List<String> labels;
-
     protected float confThreshold = 0.35F;
     protected float nmsThreshold = 0.55F;
+    protected float classificationThreshold = 0.5F;
 
     public List<String> getLabels() {
         return labels;
@@ -53,14 +46,25 @@ public abstract class YoloPredictor {
         this.nmsThreshold = nmsThreshold;
     }
 
+    public float getClassificationThreshold() {
+        return classificationThreshold;
+    }
+
+    public void setClassificationThreshold(float classificationThreshold) {
+        this.classificationThreshold = classificationThreshold;
+    }
+
     public boolean isInit() {
         return init;
     }
 
     public abstract List<DetectResult> predictYolo(Mat image) throws Exception;
 
-    public void release() {
+    public List<ClassificationResult> predictClassification(Mat image) throws Exception {
+        return Collections.emptyList();
+    }
 
+    public void release() {
     }
 
     @Override
