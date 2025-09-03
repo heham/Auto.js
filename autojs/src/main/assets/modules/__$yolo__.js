@@ -3,11 +3,14 @@ module.exports = function (runtime, global) {
   let instanceList = []
   let $yolo = function () {
     this.enabled = false
+    this.yoloInstance = null
   }
+  
   $yolo.init = function (options) {
     options = options || {};
     options.imageSize = options.imageSize || 0;
-    if (this.type = 'ncnn') {
+    
+    if (this.type == 'ncnn') {
       if (!options.labels || options.labels.length == 0) {
         throw Error('使用ncnn模型时，labels 不能为空')
       }
@@ -15,6 +18,7 @@ module.exports = function (runtime, global) {
         throw Error('使用ncnn模型时，imageSize 不能为空')
       }
     }
+    
     let type = options.type;
     if (type == 'ncnn') {
       this.type = 'ncnn';
@@ -33,7 +37,6 @@ module.exports = function (runtime, global) {
       instanceList.push(this.yoloInstance)
     } else {
       this.type = 'onnx';
-
       if (!options.modelPath) {
         throw Error('modelPath 不能为空')
       } else if (files.exists(options.modelPath) == false) {
@@ -48,14 +51,17 @@ module.exports = function (runtime, global) {
       if (options.confThreshold) {
         this.yoloInstance.setConfThreshold(options.confThreshold)
       }
-
       if (options.nmsThreshold) {
         this.yoloInstance.setNmsThreshold(options.nmsThreshold)
+      }
+      if (options.classificationThreshold) {
+        this.yoloInstance.setClassificationThreshold(options.classificationThreshold)
       }
     }
     return this.enabled
   }
 
+  // 目标检测方法
   $yolo.forward = function (img, filterOption, region) {
     filterOption = filterOption || {}
     if (!this.enabled) {
@@ -72,7 +78,7 @@ module.exports = function (runtime, global) {
     return filterResult(resultList, filterOption, region)
   }
 
-
+  // 截图并目标检测
   $yolo.captureAndForward = function (filterOption, region) {
     filterOption = filterOption || {}
     if (!this.enabled) {
@@ -80,6 +86,59 @@ module.exports = function (runtime, global) {
     }
     let resultList = util.java.toJsArray(this.yoloInstance.captureAndPredict(runtime, buildRegion(region, null, true)))
     return filterResult(resultList, filterOption, region)
+  }
+
+  // 新增：图片分类方法
+  $yolo.predictClassification = function (img, confidenceThreshold) {
+    if (!this.enabled || !this.yoloInstance) {
+      return [];
+    }
+    
+    if (confidenceThreshold) {
+        this.yoloInstance.setClassificationThreshold(confidenceThreshold);
+    }
+    
+    try {
+        let javaResults = this.yoloInstance.predictClassification(img.mat);
+        let resultList = util.java.toJsArray(javaResults);
+        
+        return resultList.map(result => {
+            return {
+                label: result.label,
+                classId: result.clsId,
+                confidence: result.confidence
+            };
+        });
+    } catch (e) {
+        console.error('分类预测错误: ' + e);
+        return [];
+    }
+  }
+
+  // 新增：截图并分类
+  $yolo.captureAndPredictClassification = function (confidenceThreshold, region) {
+    if (!this.enabled) {
+        return [];
+    }
+    if (confidenceThreshold) {
+        this.yoloInstance.setClassificationThreshold(confidenceThreshold);
+    }
+    
+    try {
+        let javaResults = this.yoloInstance.captureAndPredictClassification(runtime, buildRegion(region, null, true));
+        let resultList = util.java.toJsArray(javaResults);
+        
+        return resultList.map(result => {
+            return {
+                label: result.label,
+                classId: result.clsId,
+                confidence: result.confidence
+            };
+        });
+    } catch (e) {
+        console.error('截图分类错误: ' + e);
+        return [];
+    }
   }
 
   $yolo.release = function () {
@@ -106,7 +165,35 @@ module.exports = function (runtime, global) {
       forward: function (img, filterOption, region) {
         return $yolo.forward.call({ yoloInstance: yoloInstance, enabled: !!yoloInstance && yoloInstance.isInit() }, img, filterOption, region)
       },
-      release: () => yoloInstance.release()
+      predictClassification: function (img, confidenceThreshold) {
+        return $yolo.predictClassification.call({ yoloInstance: yoloInstance, enabled: !!yoloInstance && yoloInstance.isInit() }, img, confidenceThreshold)
+      },
+      captureAndPredictClassification: function (confidenceThreshold, region) {
+        return $yolo.captureAndPredictClassification.call({ yoloInstance: yoloInstance, enabled: !!yoloInstance && yoloInstance.isInit() }, confidenceThreshold, region)
+      },
+      release: () => {
+        if (yoloInstance) {
+            yoloInstance.release()
+        }
+      },
+      setConfThreshold: (threshold) => {
+        if (yoloInstance) {
+            yoloInstance.setConfThreshold(threshold)
+        }
+      },
+      setClassificationThreshold: (threshold) => {
+        if (yoloInstance) {
+            yoloInstance.setClassificationThreshold(threshold)
+        }
+      },
+      setNmsThreshold: (threshold) => {
+        if (yoloInstance) {
+            yoloInstance.setNmsThreshold(threshold)
+        }
+      },
+      isInit: () => {
+        return yoloInstance ? yoloInstance.isInit() : false
+      }
     }
   }
 
