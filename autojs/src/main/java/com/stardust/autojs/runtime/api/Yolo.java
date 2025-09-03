@@ -4,6 +4,8 @@ import android.os.Build;
 
 import com.stardust.autojs.yolo.ModelInitParams;
 import com.stardust.autojs.yolo.YoloInstance;
+import com.stardust.autojs.yolo.BaseYoloInstance;              // ✅ 新增 import
+import com.stardust.autojs.yolo.onnx.OnnxYoloV8Predictor;     // ✅ 新增 import
 import com.stardust.autojs.yolo.ncnn.NcnnInitParams;
 import com.stardust.autojs.yolo.ncnn.NcnnYoloInstanceFactory;
 import com.stardust.autojs.yolo.onnx.OnnxYoloInstanceFactory;
@@ -40,6 +42,20 @@ public class Yolo {
         params.setImageSize(imageSize);
         params.setUseGpu(useGpu);
         return ncnnFactory.createInstance(params);
+    }
+
+    // 添加创建分类器的方法
+    public YoloInstance createClassifier(String modelPath, List<String> labels, Integer imageSize) {
+        ModelInitParams params = new ModelInitParams();
+        params.setModelPath(modelPath);
+        params.setLabels(labels);
+        params.setImageSize(imageSize);
+        
+        OnnxYoloV8Predictor predictor = new OnnxYoloV8Predictor(modelPath);
+        predictor.setLabels(labels);
+        predictor.setShapeSize(imageSize, imageSize);
+        
+        return new BaseYoloInstance(predictor);
     }
 
 }
