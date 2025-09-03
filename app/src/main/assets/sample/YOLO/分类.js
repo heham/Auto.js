@@ -20,4 +20,5 @@ let result = cf.predictClassification(img)
 console.log(result);
 cost = (new Date() - start)
 toastLog('耗时' + cost + 'ms')
+img && img.recycle()
 cf.release();
