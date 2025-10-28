@@ -7,7 +7,7 @@ android {
     buildToolsVersion versions.buildTool
 
     defaultConfig {
-        minSdkVersion versions.mini
+        minSdkVersion 24
         targetSdkVersion versions.target
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
