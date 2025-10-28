@@ -3,7 +3,7 @@
   "appVersionName": "4.1.25.0702.alpha Modify",
   "target": 31,
   "buildApkTarget": 29,
-  "mini": 21,
+  "mini": 24,
   "compile": 33,
   "buildTool": "30.0.3",
   "patchName": "修改版"
