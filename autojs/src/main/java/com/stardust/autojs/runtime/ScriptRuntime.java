@@ -212,7 +212,7 @@ public class ScriptRuntime {
 
     @ScriptVariable
     // val onnx: OnnxModule = OnnxModule(this);
-    public OnnxModule onnx;
+    public final OnnxModule onnx = OnnxModule(this);
 
     private Images images;
 
