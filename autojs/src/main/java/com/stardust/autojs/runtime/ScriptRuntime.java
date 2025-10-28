@@ -67,6 +67,7 @@ import java.io.StringWriter;
 import java.lang.ref.WeakReference;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import com.stardust.autojs.onnx.OnnxModule;
 
 
 /**
@@ -208,6 +209,9 @@ public class ScriptRuntime {
 
     @ScriptVariable
     public Yolo yolo;
+
+    @ScriptVariable
+    val onnx: OnnxModule = OnnxModule(this)
 
     private Images images;
 
