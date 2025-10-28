@@ -211,7 +211,8 @@ public class ScriptRuntime {
     public Yolo yolo;
 
     @ScriptVariable
-    val onnx: OnnxModule = OnnxModule(this);
+    // val onnx: OnnxModule = OnnxModule(this);
+    public OnnxModule onnx;
 
     private Images images;
 
